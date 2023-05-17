@@ -30,6 +30,7 @@ __global__ void updateGrid(unsigned int* d_board, unsigned int* d_board_new, flo
     int col = blockIdx.x * blockDim.x + threadIdx.x; // column
     int row = blockIdx.y * blockDim.y + threadIdx.y; // row
 
+    // idx v globalnem pomnilniku
     int idx = row * n_cols + col;
 
     // idx znotraj shared memory
@@ -54,26 +55,26 @@ __global__ void updateGrid(unsigned int* d_board, unsigned int* d_board_new, flo
 
         // lower edge
         if (threadIdx.y == blockDim.y - 1) {
-            s_board[BLOCK_SIZE + 1][shared_col] = d_board[(row + 1) * n_cols + col];
-            s_levels[BLOCK_SIZE + 1][shared_col] = d_levels[(row + 1) * n_cols + col];
-            s_board_new[BLOCK_SIZE + 1][shared_col] = d_board_new[(row + 1) * n_cols + col];
-            s_levels_new[BLOCK_SIZE + 1][shared_col] = d_levels_new[(row + 1) * n_cols + col];
+            s_board[shared_row + 1][shared_col] = d_board[(row + 1) * n_cols + col];
+            s_levels[shared_row + 1][shared_col] = d_levels[(row + 1) * n_cols + col];
+            s_board_new[shared_row + 1][shared_col] = d_board_new[(row + 1) * n_cols + col];
+            s_levels_new[shared_row + 1][shared_col] = d_levels_new[(row + 1) * n_cols + col];
+        }
+
+        // right edge
+        if (threadIdx.x == blockDim.x - 1) {
+            s_board[shared_row][shared_col + 1] = d_board[row * n_cols + col + 1];
+            s_levels[shared_row][shared_col + 1] = d_levels[row * n_cols + col + 1];
+            s_board_new[shared_row][shared_col + 1] = d_board_new[row * n_cols + col + 1];
+            s_levels_new[shared_row][shared_col + 1] = d_levels_new[row * n_cols + col + 1];
         }
 
         // left edge
         if (threadIdx.x == 0) {
             s_board[shared_row][0] = d_board[row * n_cols + col - 1];
-            s_board[shared_row][BLOCK_SIZE + 1] = d_board[row * n_cols + col + 1];
             s_levels[shared_row][0] = d_levels[row * n_cols + col - 1];
-            s_levels_new[shared_row][BLOCK_SIZE + 1] = d_levels_new[row * n_cols + col + 1];
-        }
-
-        // right edge
-        if (threadIdx.x == blockDim.x - 1) {
-            s_board[shared_row][BLOCK_SIZE + 1] = d_board[row * n_cols + col + 1];
-            s_levels[shared_row][BLOCK_SIZE + 1] = d_levels[row * n_cols + col + 1];
-            s_board_new[shared_row][BLOCK_SIZE + 1] = d_board_new[row * n_cols + col + 1];
-            s_levels_new[shared_row][BLOCK_SIZE + 1] = d_levels_new[row * n_cols + col + 1];
+            s_board_new[shared_row][0] = d_board_new[row * n_cols + col - 1];
+            s_levels_new[shared_row][0] = d_levels_new[row * n_cols + col - 1];
         }
 
         // top left corner
@@ -86,98 +87,30 @@ __global__ void updateGrid(unsigned int* d_board, unsigned int* d_board_new, flo
 
         // top right corner
         if (threadIdx.x == blockDim.x - 1 && threadIdx.y == 0) {
-            s_board[0][BLOCK_SIZE + 1] = d_board[(row - 1) * n_cols + col + 1];
-            s_levels[0][BLOCK_SIZE + 1] = d_levels[(row - 1) * n_cols + col + 1];
-            s_board_new[0][BLOCK_SIZE + 1] = d_board_new[(row - 1) * n_cols + col + 1];
-            s_levels_new[0][BLOCK_SIZE + 1] = d_levels_new[(row - 1) * n_cols + col + 1];
+            s_board[0][shared_col + 1] = d_board[(row - 1) * n_cols + col + 1];
+            s_levels[0][shared_col + 1] = d_levels[(row - 1) * n_cols + col + 1];
+            s_board_new[0][shared_col + 1] = d_board_new[(row - 1) * n_cols + col + 1];
+            s_levels_new[0][shared_col + 1] = d_levels_new[(row - 1) * n_cols + col + 1];
         }
 
         // bottom left corner
         if (threadIdx.x == 0 && threadIdx.y == blockDim.y - 1) {
-            s_board[BLOCK_SIZE + 1][0] = d_board[(row + 1) * n_cols + col - 1];
-            s_levels[BLOCK_SIZE + 1][0] = d_levels[(row + 1) * n_cols + col - 1];
-            s_board_new[BLOCK_SIZE + 1][0] = d_board_new[(row + 1) * n_cols + col - 1];
-            s_levels_new[BLOCK_SIZE + 1][0] = d_levels_new[(row + 1) * n_cols + col - 1];
+            s_board[shared_row + 1][0] = d_board[(row + 1) * n_cols + col - 1];
+            s_levels[shared_row + 1][0] = d_levels[(row + 1) * n_cols + col - 1];
+            s_board_new[shared_row + 1][0] = d_board_new[(row + 1) * n_cols + col - 1];
+            s_levels_new[shared_row + 1][0] = d_levels_new[(row + 1) * n_cols + col - 1];
         }
 
         // bottom right corner
         if (threadIdx.x == blockDim.x - 1 && threadIdx.y == blockDim.y - 1) {
-            s_board[BLOCK_SIZE + 1][BLOCK_SIZE + 1] = d_board[(row + 1) * n_cols + col + 1];
-            s_levels[BLOCK_SIZE + 1][BLOCK_SIZE + 1] = d_levels[(row + 1) * n_cols + col + 1];
-            s_board_new[BLOCK_SIZE + 1][BLOCK_SIZE + 1] = d_board_new[(row + 1) * n_cols + col + 1];
-            s_levels_new[BLOCK_SIZE + 1][BLOCK_SIZE + 1] = d_levels_new[(row + 1) * n_cols + col + 1];
+            s_board[shared_row + 1][shared_col + 1] = d_board[(row + 1) * n_cols + col + 1];
+            s_levels[shared_row + 1][shared_col + 1] = d_levels[(row + 1) * n_cols + col + 1];
+            s_board_new[shared_row + 1][shared_col + 1] = d_board_new[(row + 1) * n_cols + col + 1];
+            s_levels_new[shared_row + 1][shared_col + 1] = d_levels_new[(row + 1) * n_cols + col + 1];
         }
-        /*
-
-        // Initialize corner buffered cells to 0
-        if (threadIdx.x == 0 && threadIdx.y == 0 && row > 0 && col > 0) {
-            s_board[0][0] = d_board[(row - 1) * n_cols + col - 1];
-            s_levels[0][0] = d_levels[(row - 1) * n_cols + col - 1];
-            s_board_new[0][0] = d_board_new[(row - 1) * n_cols + col - 1];
-            s_levels_new[0][0] = d_levels_new[(row - 1) * n_cols + col - 1];
-        }
-        if (threadIdx.x == 0 && threadIdx.y == blockDim.y - 1 && row < n_rows - 1 && col > 0) {
-            s_board[BLOCK_SIZE + 1][0] = d_board[(row + 1) * n_cols + col - 1];
-            s_levels[BLOCK_SIZE + 1][0] = d_levels[(row + 1) * n_cols + col - 1];
-            s_board_new[BLOCK_SIZE + 1][0] = d_board_new[(row + 1) * n_cols + col - 1];
-            s_levels_new[BLOCK_SIZE + 1][0] = d_levels_new[(row + 1) * n_cols + col - 1];
-        }
-        if (threadIdx.x == blockDim.x - 1 && threadIdx.y == 0 && row > 0 && col < n_cols - 1) {
-            s_board[0][BLOCK_SIZE + 1] = d_board[(row - 1) * n_cols + col + 1];
-            s_levels[0][BLOCK_SIZE + 1] = d_levels[(row - 1) * n_cols + col + 1];
-            s_board_new[0][BLOCK_SIZE + 1] = d_board_new[(row - 1) * n_cols + col + 1];
-            s_levels_new[0][BLOCK_SIZE + 1] = d_levels_new[(row - 1) * n_cols + col + 1];
-        }
-        if (threadIdx.x == blockDim.x - 1 && threadIdx.y == blockDim.y - 1 && row < n_rows - 1 && col < n_cols - 1) {
-            s_board[BLOCK_SIZE + 1][BLOCK_SIZE + 1] = d_board[(row + 1) * n_cols + col + 1];
-            s_levels[BLOCK_SIZE + 1][BLOCK_SIZE + 1] = d_levels[(row + 1) * n_cols + col + 1];
-            s_board_new[BLOCK_SIZE + 1][BLOCK_SIZE + 1] = d_board_new[(row + 1) * n_cols + col + 1];
-            s_levels_new[BLOCK_SIZE + 1][BLOCK_SIZE + 1] = d_levels_new[(row + 1) * n_cols + col + 1];
-        } */
-
-        /* // left edge
-        if (threadIdx.x == 0 && col > 0) {
-            s_board[shared_row][shared_col - 1] = d_board[row * n_cols + max(col - 1, 0)];
-            s_levels[shared_row][shared_col - 1] = d_levels[row * n_cols + max(col - 1, 0)];
-
-            // top left corner
-            if (threadIdx.y == 0) {
-                s_board[shared_row - 1][shared_col - 1] = d_board[max(row - 1, 0) * n_cols + max(col - 1, 0)];
-                s_levels[shared_row - 1][shared_col - 1] = d_levels[max(row - 1, 0) * n_cols + max(col - 1, 0)];
-            }
-            // bottom left corner
-            if (threadIdx.y == blockDim.y - 1) {
-                s_board[shared_row + 1][shared_col - 1] = d_board[min(row + 1, n_rows - 1) * n_cols + max(col - 1, 0)];
-                s_levels[shared_row + 1][shared_col - 1] = d_levels[min(row + 1, n_rows - 1) * n_cols + max(col - 1, 0)];
-            }
-        }
-        // right edge
-        if (threadIdx.x == blockDim.x - 1 && col < n_cols - 1) {
-            s_board[shared_row][shared_col + 1] = d_board[row * n_cols + min(col + 1, n_cols - 1)];
-            s_levels[shared_row][shared_col + 1] = d_levels[row * n_cols + min(col + 1, n_cols - 1)];
-
-            // top right corner
-            if (threadIdx.y == 0) {
-                s_board[shared_row - 1][shared_col + 1] = d_board[max(row - 1, 0) * n_cols + min(col + 1, n_cols - 1)];
-                s_levels[shared_row - 1][shared_col + 1] = d_levels[max(row - 1, 0) * n_cols + min(col + 1, n_cols - 1)];
-            }
-            // bottom right corner
-            if (threadIdx.y == blockDim.y - 1) {
-                s_board[shared_row + 1][shared_col + 1] = d_board[min(row + 1, n_rows - 1) * n_cols + min(col + 1, n_cols - 1)];
-                s_levels[shared_row + 1][shared_col + 1] = d_levels[min(row + 1, n_rows - 1) * n_cols + min(col + 1, n_cols - 1)];
-            }
-        }
-        // top edge
-        if (threadIdx.y == 0 && row > 0) {
-            s_board[shared_row - 1][shared_col] = d_board[max(row - 1, 0) * n_cols + col];
-            s_levels[shared_row - 1][shared_col] = d_levels[max(row - 1, 0) * n_cols + col];
-        }
-        // bottom edge
-        if (threadIdx.y == blockDim.y - 1 && row < n_rows - 1) {
-            s_board[shared_row + 1][shared_col] = d_board[min(row + 1, n_rows - 1) * n_cols + col];
-            s_levels[shared_row + 1][shared_col] = d_levels[min(row + 1, n_rows - 1) * n_cols + col];
-        } */
     }
+
+    __syncthreads();
 
     // Only one thread per block prints the shared memory
 
@@ -185,12 +118,21 @@ __global__ void updateGrid(unsigned int* d_board, unsigned int* d_board_new, flo
         // Acquire the lock
         while (atomicCAS(&lock, 0, 1) != 0)
             ;
-
-        printf("Block (%d, %d)\n", blockIdx.x, blockIdx.y);
+        printf("Before calculation Block (%d, %d)\n", blockIdx.x, blockIdx.y);
         // Print the shared memory
         for (int i = 0; i < BLOCK_SIZE + 2; i++) {
             for (int j = 0; j < BLOCK_SIZE + 2; j++) {
-                printf("%d ", s_board[i][j]);
+                printf("%d ", s_board_new[i][j]);
+            }
+            printf("\n");
+        }
+        printf("\n");
+
+        // print the shared levels
+        printf("levels\n");
+        for (int i = 0; i < BLOCK_SIZE + 2; i++) {
+            for (int j = 0; j < BLOCK_SIZE + 2; j++) {
+                printf("%f ", s_levels_new[i][j]);
             }
             printf("\n");
         }
@@ -206,7 +148,7 @@ __global__ void updateGrid(unsigned int* d_board, unsigned int* d_board_new, flo
     // 2 -> boundary
     // 3 -> frozen
     // only unreceptive and boundary cells can receive water
-    if (col < n_cols && row < n_rows && s_board[shared_row][shared_col] != 0 && s_board[shared_row][shared_col] != 3) {
+    if (col < n_cols && row < n_rows && s_board[shared_row][shared_col] != 0) {
         neighs = (col % 2 == 0) ? neighs_even_col : neighs_odd_col;
 
         // find the accumulation of water from the neighbors
@@ -215,7 +157,7 @@ __global__ void updateGrid(unsigned int* d_board, unsigned int* d_board_new, flo
             int neigh_col = shared_col + neighs[k][1]; // x
 
             // edge and unreceptive cells contributes water
-            if (s_board[shared_row][shared_col] < 2) {
+            if (s_board[neigh_row][neigh_col] < 2) {
                 s_levels_new[shared_row][shared_col] += alpha12 * s_levels[neigh_row][neigh_col];
             }
         }
@@ -249,11 +191,43 @@ __global__ void updateGrid(unsigned int* d_board, unsigned int* d_board_new, flo
     // Synchronize threads to ensure all shared memory updates are complete
     __syncthreads();
 
+    // Only one thread per block prints the shared memory
+
+    /* if (threadIdx.x == 0 && threadIdx.y == 0) {
+        // Acquire the lock
+        while (atomicCAS(&lock, 0, 1) != 0)
+            ;
+
+        printf("After calculation Block (%d, %d)\n", blockIdx.x, blockIdx.y);
+        // Print the shared memory
+        for (int i = 0; i < BLOCK_SIZE + 2; i++) {
+            for (int j = 0; j < BLOCK_SIZE + 2; j++) {
+                printf("%d ", s_board_new[i][j]);
+            }
+            printf("\n");
+        }
+        printf("\n");
+
+        // print the shared levels
+        printf("levels\n");
+        for (int i = 0; i < BLOCK_SIZE + 2; i++) {
+            for (int j = 0; j < BLOCK_SIZE + 2; j++) {
+                printf("%f ", s_levels_new[i][j]);
+            }
+            printf("\n");
+        }
+        printf("\n");
+
+        // Release the lock
+        lock = 0;
+    } */
+
     // Copy values from shared memory back to global memory
-    if (row < n_rows && col < n_cols) {
+    if (row + 1 < n_rows && col - 1 < n_cols) {
         d_board_new[idx] = s_board_new[shared_row][shared_col];
         d_levels_new[idx] = s_levels_new[shared_row][shared_col];
     }
+    __syncthreads();
 
     // Write buffered edge cells to global memory using atomic operations
     if (threadIdx.x == 0 && col > 0) {
@@ -312,7 +286,7 @@ void saveBoardToFile(unsigned int* board, unsigned int n, unsigned int m, const 
 
 int main()
 {
-    int n = 12, m = 12;
+    int n = 60, m = 60;
     float alpha = 1., beta = 0.9, gamma = 0.001;
 
     int N_steps = 14;
@@ -355,17 +329,19 @@ int main()
     dim3 blockSize(BLOCK_SIZE, BLOCK_SIZE);
 
     // print board
-
+    printf("Initial board:\n");
     for (int i = 0; i < n; i++) {
-        for (int j = 0; j < m; j++)
+        for (int j = 0; j < m; j++) {
             printf("%d ", board[i][j]);
+        }
         printf("\n");
     }
+    printf("\n");
 
-    for (int iter = 0; iter < 3; iter++) {
+    for (int iter = 0; iter < 30; iter++) {
 
         // Launch the kernel to update the grid
-        updateGrid<<<gridSize, blockSize, (BLOCK_SIZE + 2) * (BLOCK_SIZE + 2)>>>(d_board, d_board_new, d_levels, d_levels_new, n, m, alpha, gamma);
+        updateGrid<<<gridSize, blockSize, (BLOCK_SIZE + 2) * (BLOCK_SIZE + 2) + (BLOCK_SIZE + 2) * (BLOCK_SIZE + 2)>>>(d_board, d_board_new, d_levels, d_levels_new, n, m, alpha, gamma);
 
         /* d_board = d_board_new;
         d_levels = d_levels_new; */
@@ -383,6 +359,7 @@ int main()
             }
             printf("\n");
         }
+        printf("\n");
 
         // Save the board to a file
         char filename[50];
