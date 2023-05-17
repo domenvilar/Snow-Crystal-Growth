@@ -7,13 +7,18 @@
 // srun --reservation=fri -G1 -n1 test
 
 // Grid dimensions
-#define BLOCK_SIZE 16 // Number of threads per block 16x16
+#define BLOCK_SIZE 4 // Number of threads per block
+
+__device__ int lock = 0;
 
 __global__ void updateGrid(unsigned int* d_board, unsigned int* d_board_new, float* d_levels, float* d_levels_new, int n_rows, int n_cols, float alpha, float gamma)
 {
 
-    __shared__ unsigned int shared_board[BLOCK_SIZE + 2][BLOCK_SIZE + 2];
-    __shared__ float shared_levels[BLOCK_SIZE + 2][BLOCK_SIZE + 2];
+    __shared__ unsigned int s_board[BLOCK_SIZE + 2][BLOCK_SIZE + 2];
+    __shared__ float s_levels[BLOCK_SIZE + 2][BLOCK_SIZE + 2];
+
+    __shared__ unsigned int s_board_new[BLOCK_SIZE + 2][BLOCK_SIZE + 2];
+    __shared__ float s_levels_new[BLOCK_SIZE + 2][BLOCK_SIZE + 2];
 
     // precompute coefficients
     float alpha12 = alpha / 12.;
@@ -27,103 +32,269 @@ __global__ void updateGrid(unsigned int* d_board, unsigned int* d_board_new, flo
 
     int idx = row * n_cols + col;
 
-    // buffered
-    int shared_row = threadIdx.y + 1;
+    // idx znotraj shared memory
     int shared_col = threadIdx.x + 1;
-    int shared_idx = shared_row * (BLOCK_SIZE + 2) + shared_col;
+    int shared_row = threadIdx.y + 1;
 
     // Load current cell and buffered cells into shared memory
     if (row < n_rows && col < n_cols) {
-        shared_board[shared_row][shared_col] = d_board[idx];
-        shared_levels[shared_row][shared_col] = d_levels[idx];
+        s_board[shared_row][shared_col] = d_board[idx];
+        s_levels[shared_row][shared_col] = d_levels[idx];
 
-        // Load halo cells
+        s_board_new[shared_row][shared_col] = d_board_new[idx];
+        s_levels_new[shared_row][shared_col] = d_levels_new[idx];
+
+        // upper edge
+        if (threadIdx.y == 0) {
+            s_board[0][shared_col] = d_board[(row - 1) * n_cols + col];
+            s_levels[0][shared_col] = d_levels[(row - 1) * n_cols + col];
+            s_board_new[0][shared_col] = d_board_new[(row - 1) * n_cols + col];
+            s_levels_new[0][shared_col] = d_levels_new[(row - 1) * n_cols + col];
+        }
+
+        // lower edge
+        if (threadIdx.y == blockDim.y - 1) {
+            s_board[BLOCK_SIZE + 1][shared_col] = d_board[(row + 1) * n_cols + col];
+            s_levels[BLOCK_SIZE + 1][shared_col] = d_levels[(row + 1) * n_cols + col];
+            s_board_new[BLOCK_SIZE + 1][shared_col] = d_board_new[(row + 1) * n_cols + col];
+            s_levels_new[BLOCK_SIZE + 1][shared_col] = d_levels_new[(row + 1) * n_cols + col];
+        }
+
         // left edge
         if (threadIdx.x == 0) {
-            shared_board[shared_row][shared_col - 1] = d_board[row * n_cols + max(col - 1, 0)];
-            shared_levels[shared_row][shared_col - 1] = d_levels[row * n_cols + max(col - 1, 0)];
+            s_board[shared_row][0] = d_board[row * n_cols + col - 1];
+            s_board[shared_row][BLOCK_SIZE + 1] = d_board[row * n_cols + col + 1];
+            s_levels[shared_row][0] = d_levels[row * n_cols + col - 1];
+            s_levels_new[shared_row][BLOCK_SIZE + 1] = d_levels_new[row * n_cols + col + 1];
+        }
+
+        // right edge
+        if (threadIdx.x == blockDim.x - 1) {
+            s_board[shared_row][BLOCK_SIZE + 1] = d_board[row * n_cols + col + 1];
+            s_levels[shared_row][BLOCK_SIZE + 1] = d_levels[row * n_cols + col + 1];
+            s_board_new[shared_row][BLOCK_SIZE + 1] = d_board_new[row * n_cols + col + 1];
+            s_levels_new[shared_row][BLOCK_SIZE + 1] = d_levels_new[row * n_cols + col + 1];
+        }
+
+        // top left corner
+        if (threadIdx.x == 0 && threadIdx.y == 0) {
+            s_board[0][0] = d_board[(row - 1) * n_cols + col - 1];
+            s_levels[0][0] = d_levels[(row - 1) * n_cols + col - 1];
+            s_board_new[0][0] = d_board_new[(row - 1) * n_cols + col - 1];
+            s_levels_new[0][0] = d_levels_new[(row - 1) * n_cols + col - 1];
+        }
+
+        // top right corner
+        if (threadIdx.x == blockDim.x - 1 && threadIdx.y == 0) {
+            s_board[0][BLOCK_SIZE + 1] = d_board[(row - 1) * n_cols + col + 1];
+            s_levels[0][BLOCK_SIZE + 1] = d_levels[(row - 1) * n_cols + col + 1];
+            s_board_new[0][BLOCK_SIZE + 1] = d_board_new[(row - 1) * n_cols + col + 1];
+            s_levels_new[0][BLOCK_SIZE + 1] = d_levels_new[(row - 1) * n_cols + col + 1];
+        }
+
+        // bottom left corner
+        if (threadIdx.x == 0 && threadIdx.y == blockDim.y - 1) {
+            s_board[BLOCK_SIZE + 1][0] = d_board[(row + 1) * n_cols + col - 1];
+            s_levels[BLOCK_SIZE + 1][0] = d_levels[(row + 1) * n_cols + col - 1];
+            s_board_new[BLOCK_SIZE + 1][0] = d_board_new[(row + 1) * n_cols + col - 1];
+            s_levels_new[BLOCK_SIZE + 1][0] = d_levels_new[(row + 1) * n_cols + col - 1];
+        }
+
+        // bottom right corner
+        if (threadIdx.x == blockDim.x - 1 && threadIdx.y == blockDim.y - 1) {
+            s_board[BLOCK_SIZE + 1][BLOCK_SIZE + 1] = d_board[(row + 1) * n_cols + col + 1];
+            s_levels[BLOCK_SIZE + 1][BLOCK_SIZE + 1] = d_levels[(row + 1) * n_cols + col + 1];
+            s_board_new[BLOCK_SIZE + 1][BLOCK_SIZE + 1] = d_board_new[(row + 1) * n_cols + col + 1];
+            s_levels_new[BLOCK_SIZE + 1][BLOCK_SIZE + 1] = d_levels_new[(row + 1) * n_cols + col + 1];
+        }
+        /*
+
+        // Initialize corner buffered cells to 0
+        if (threadIdx.x == 0 && threadIdx.y == 0 && row > 0 && col > 0) {
+            s_board[0][0] = d_board[(row - 1) * n_cols + col - 1];
+            s_levels[0][0] = d_levels[(row - 1) * n_cols + col - 1];
+            s_board_new[0][0] = d_board_new[(row - 1) * n_cols + col - 1];
+            s_levels_new[0][0] = d_levels_new[(row - 1) * n_cols + col - 1];
+        }
+        if (threadIdx.x == 0 && threadIdx.y == blockDim.y - 1 && row < n_rows - 1 && col > 0) {
+            s_board[BLOCK_SIZE + 1][0] = d_board[(row + 1) * n_cols + col - 1];
+            s_levels[BLOCK_SIZE + 1][0] = d_levels[(row + 1) * n_cols + col - 1];
+            s_board_new[BLOCK_SIZE + 1][0] = d_board_new[(row + 1) * n_cols + col - 1];
+            s_levels_new[BLOCK_SIZE + 1][0] = d_levels_new[(row + 1) * n_cols + col - 1];
+        }
+        if (threadIdx.x == blockDim.x - 1 && threadIdx.y == 0 && row > 0 && col < n_cols - 1) {
+            s_board[0][BLOCK_SIZE + 1] = d_board[(row - 1) * n_cols + col + 1];
+            s_levels[0][BLOCK_SIZE + 1] = d_levels[(row - 1) * n_cols + col + 1];
+            s_board_new[0][BLOCK_SIZE + 1] = d_board_new[(row - 1) * n_cols + col + 1];
+            s_levels_new[0][BLOCK_SIZE + 1] = d_levels_new[(row - 1) * n_cols + col + 1];
+        }
+        if (threadIdx.x == blockDim.x - 1 && threadIdx.y == blockDim.y - 1 && row < n_rows - 1 && col < n_cols - 1) {
+            s_board[BLOCK_SIZE + 1][BLOCK_SIZE + 1] = d_board[(row + 1) * n_cols + col + 1];
+            s_levels[BLOCK_SIZE + 1][BLOCK_SIZE + 1] = d_levels[(row + 1) * n_cols + col + 1];
+            s_board_new[BLOCK_SIZE + 1][BLOCK_SIZE + 1] = d_board_new[(row + 1) * n_cols + col + 1];
+            s_levels_new[BLOCK_SIZE + 1][BLOCK_SIZE + 1] = d_levels_new[(row + 1) * n_cols + col + 1];
+        } */
+
+        /* // left edge
+        if (threadIdx.x == 0 && col > 0) {
+            s_board[shared_row][shared_col - 1] = d_board[row * n_cols + max(col - 1, 0)];
+            s_levels[shared_row][shared_col - 1] = d_levels[row * n_cols + max(col - 1, 0)];
 
             // top left corner
             if (threadIdx.y == 0) {
-                shared_board[shared_row - 1][shared_col - 1] = d_board[max(row - 1, 0) * n_cols + max(col - 1, 0)];
-                shared_levels[shared_row - 1][shared_col - 1] = d_levels[max(row - 1, 0) * n_cols + max(col - 1, 0)];
+                s_board[shared_row - 1][shared_col - 1] = d_board[max(row - 1, 0) * n_cols + max(col - 1, 0)];
+                s_levels[shared_row - 1][shared_col - 1] = d_levels[max(row - 1, 0) * n_cols + max(col - 1, 0)];
             }
             // bottom left corner
             if (threadIdx.y == blockDim.y - 1) {
-                shared_board[shared_row + 1][shared_col - 1] = d_board[min(row + 1, n_rows - 1) * n_cols + max(col - 1, 0)];
-                shared_levels[shared_row + 1][shared_col - 1] = d_levels[min(row + 1, n_rows - 1) * n_cols + max(col - 1, 0)];
+                s_board[shared_row + 1][shared_col - 1] = d_board[min(row + 1, n_rows - 1) * n_cols + max(col - 1, 0)];
+                s_levels[shared_row + 1][shared_col - 1] = d_levels[min(row + 1, n_rows - 1) * n_cols + max(col - 1, 0)];
             }
         }
         // right edge
-        if (threadIdx.x == blockDim.x - 1) {
-            shared_board[shared_row][shared_col + 1] = d_board[row * n_cols + min(col + 1, n_cols - 1)];
-            shared_levels[shared_row][shared_col + 1] = d_levels[row * n_cols + min(col + 1, n_cols - 1)];
+        if (threadIdx.x == blockDim.x - 1 && col < n_cols - 1) {
+            s_board[shared_row][shared_col + 1] = d_board[row * n_cols + min(col + 1, n_cols - 1)];
+            s_levels[shared_row][shared_col + 1] = d_levels[row * n_cols + min(col + 1, n_cols - 1)];
 
             // top right corner
             if (threadIdx.y == 0) {
-                shared_board[shared_row - 1][shared_col + 1] = d_board[max(row - 1, 0) * n_cols + min(col + 1, n_cols - 1)];
-                shared_levels[shared_row - 1][shared_col + 1] = d_levels[max(row - 1, 0) * n_cols + min(col + 1, n_cols - 1)];
+                s_board[shared_row - 1][shared_col + 1] = d_board[max(row - 1, 0) * n_cols + min(col + 1, n_cols - 1)];
+                s_levels[shared_row - 1][shared_col + 1] = d_levels[max(row - 1, 0) * n_cols + min(col + 1, n_cols - 1)];
             }
             // bottom right corner
             if (threadIdx.y == blockDim.y - 1) {
-                shared_board[shared_row + 1][shared_col + 1] = d_board[min(row + 1, n_rows - 1) * n_cols + min(col + 1, n_cols - 1)];
-                shared_levels[shared_row + 1][shared_col + 1] = d_levels[min(row + 1, n_rows - 1) * n_cols + min(col + 1, n_cols - 1)];
+                s_board[shared_row + 1][shared_col + 1] = d_board[min(row + 1, n_rows - 1) * n_cols + min(col + 1, n_cols - 1)];
+                s_levels[shared_row + 1][shared_col + 1] = d_levels[min(row + 1, n_rows - 1) * n_cols + min(col + 1, n_cols - 1)];
             }
         }
         // top edge
-        if (threadIdx.y == 0) {
-            shared_board[shared_row - 1][shared_col] = d_board[max(row - 1, 0) * n_cols + col];
-            shared_levels[shared_row - 1][shared_col] = d_levels[max(row - 1, 0) * n_cols + col];
+        if (threadIdx.y == 0 && row > 0) {
+            s_board[shared_row - 1][shared_col] = d_board[max(row - 1, 0) * n_cols + col];
+            s_levels[shared_row - 1][shared_col] = d_levels[max(row - 1, 0) * n_cols + col];
         }
         // bottom edge
-        if (threadIdx.y == blockDim.y - 1) {
-            shared_board[shared_row + 1][shared_col] = d_board[min(row + 1, n_rows - 1) * n_cols + col];
-            shared_levels[shared_row + 1][shared_col] = d_levels[min(row + 1, n_rows - 1) * n_cols + col];
-        }
+        if (threadIdx.y == blockDim.y - 1 && row < n_rows - 1) {
+            s_board[shared_row + 1][shared_col] = d_board[min(row + 1, n_rows - 1) * n_cols + col];
+            s_levels[shared_row + 1][shared_col] = d_levels[min(row + 1, n_rows - 1) * n_cols + col];
+        } */
     }
 
-    // Synchronize to ensure all data is loaded into shared memory
-    __syncthreads();
+    // Only one thread per block prints the shared memory
 
+    /* if (threadIdx.x == 0 && threadIdx.y == 0) {
+        // Acquire the lock
+        while (atomicCAS(&lock, 0, 1) != 0)
+            ;
+
+        printf("Block (%d, %d)\n", blockIdx.x, blockIdx.y);
+        // Print the shared memory
+        for (int i = 0; i < BLOCK_SIZE + 2; i++) {
+            for (int j = 0; j < BLOCK_SIZE + 2; j++) {
+                printf("%d ", s_board[i][j]);
+            }
+            printf("\n");
+        }
+        printf("\n");
+
+        // Release the lock
+        lock = 0;
+    } */
     // Check if the coordinates are within the grid bounds
     // and current cell is not frozen or edge
-    if (col < n_cols && row < n_rows && d_board[idx] != 3 && d_board[idx] != 0) {
+    // 0 -> edge cell
+    // 1 -> unreceptive
+    // 2 -> boundary
+    // 3 -> frozen
+    // only unreceptive and boundary cells can receive water
+    if (col < n_cols && row < n_rows && s_board[shared_row][shared_col] != 0 && s_board[shared_row][shared_col] != 3) {
         neighs = (col % 2 == 0) ? neighs_even_col : neighs_odd_col;
 
         // find the accumulation of water from the neighbors
         for (int k = 0; k < 6; k++) {
-            int neigh_row = row + neighs[k][0]; // y
-            int neigh_col = col + neighs[k][1]; // x
+            int neigh_row = shared_row + neighs[k][0]; // y
+            int neigh_col = shared_col + neighs[k][1]; // x
 
-            // neighboring edge and unreceptive cells contributes water
-            if (d_board[neigh_row * n_cols + neigh_col] < 2) {
-                d_levels_new[idx] += alpha12 * d_levels[neigh_row * n_cols + neigh_col];
+            // edge and unreceptive cells contributes water
+            if (s_board[shared_row][shared_col] < 2) {
+                s_levels_new[shared_row][shared_col] += alpha12 * s_levels[neigh_row][neigh_col];
             }
         }
 
         // if the cell is boundary
-        if (d_board[idx] == 2) {
-            d_levels_new[idx] += gamma; // add the water vapor
+        // add the water vapor and check if it freezes
+        if (s_board[shared_row][shared_col] == 2) {
+            s_levels_new[shared_row][shared_col] += gamma; // add the water vapor
 
-            // if the cell freezes, set the flag and update the neighbor cells
-            if (d_levels_new[idx] >= 1) {
-                d_board_new[idx] = 3;
+            // if the cell freezes neighbors become boundary
+            if (s_levels_new[shared_row][shared_col] >= 1) {
+                s_board_new[shared_row][shared_col] = 3;
 
                 for (int k = 0; k < 6; k++) {
-                    int neigh_row = row + neighs[k][0];
-                    int neigh_col = col + neighs[k][1];
+                    int neigh_row = shared_row + neighs[k][0];
+                    int neigh_col = shared_col + neighs[k][1];
 
                     // we dont update edge cells
-                    if (d_board[neigh_row * n_cols + neigh_col] != 0) {
-                        atomicMax(&d_board_new[neigh_row * n_cols + neigh_col], 2);
+                    if (s_board[neigh_row][neigh_col] != 0) {
+                        atomicMax(&s_board_new[neigh_row][neigh_col], 2);
                     }
                 }
             }
 
-        } else {
-            // otherwise the water also difuses out of the cell
-            d_levels_new[idx] -= alpha2 * d_levels[idx];
+        } else if (s_board[shared_row][shared_col] == 1) {
+            // otherwise the water also difuses out of the unreceptive cell
+            s_levels_new[shared_row][shared_col] -= alpha2 * s_levels[shared_row][shared_col];
         }
+    }
+
+    // Synchronize threads to ensure all shared memory updates are complete
+    __syncthreads();
+
+    // Copy values from shared memory back to global memory
+    if (row < n_rows && col < n_cols) {
+        d_board_new[idx] = s_board_new[shared_row][shared_col];
+        d_levels_new[idx] = s_levels_new[shared_row][shared_col];
+    }
+
+    // Write buffered edge cells to global memory using atomic operations
+    if (threadIdx.x == 0 && col > 0) {
+        // Left edge
+        if (s_board_new[shared_row][shared_col - 1] == 2) // col is global index in d_board
+            atomicMax(&d_board_new[row * n_cols + col - 1], 2);
+
+        // Top left corner
+        if (threadIdx.y == 0 && s_board_new[shared_row - 1][shared_col - 1] == 2) {
+            atomicMax(&d_board_new[(row - 1) * n_cols + (col - 1)], 2);
+        }
+        // Bottom left corner
+        if (threadIdx.y == blockDim.y - 1 && s_board_new[shared_row + 1][shared_col - 1] == 2) {
+            atomicMax(&d_board_new[(row + 1) * n_cols + (col - 1)], 2);
+        }
+    }
+
+    if (threadIdx.x == blockDim.x - 1 && col < n_cols - 1) {
+        // Right edge
+        if (s_board_new[shared_row][shared_col + 1] == 2)
+            atomicMax(&d_board_new[row * n_cols + col + 1], 2);
+
+        // Top right corner
+        if (threadIdx.y == 0 && s_board_new[shared_row - 1][shared_col + 1] == 2) {
+            atomicMax(&d_board_new[(row - 1) * n_cols + (col + 1)], 2);
+        }
+
+        // Bottom right corner
+        if (threadIdx.y == blockDim.y - 1 && s_board_new[shared_row + 1][shared_col + 1] == 2) {
+            atomicMax(&d_board_new[(row + 1) * n_cols + (col + 1)], 2);
+        }
+    }
+
+    // top edge
+    if (threadIdx.y == 0 && row > 0 && s_board_new[shared_row - 1][shared_col] == 2) {
+        atomicMax(&d_board_new[(row - 1) * n_cols + col], 2);
+    }
+
+    // bottom edge
+    if (threadIdx.y == blockDim.y - 1 && row < n_rows - 1 && s_board_new[shared_row + 1][shared_col] == 2) {
+        atomicMax(&d_board_new[(row + 1) * n_cols + col], 2);
     }
 }
 
@@ -141,7 +312,7 @@ void saveBoardToFile(unsigned int* board, unsigned int n, unsigned int m, const 
 
 int main()
 {
-    int n = 50, m = 60;
+    int n = 12, m = 12;
     float alpha = 1., beta = 0.9, gamma = 0.001;
 
     int N_steps = 14;
@@ -183,20 +354,35 @@ int main()
     dim3 gridSize(numBlocksX, numBlocksY);
     dim3 blockSize(BLOCK_SIZE, BLOCK_SIZE);
 
-    for (int iter = 0; iter < 1000; iter++) {
+    // print board
+
+    for (int i = 0; i < n; i++) {
+        for (int j = 0; j < m; j++)
+            printf("%d ", board[i][j]);
+        printf("\n");
+    }
+
+    for (int iter = 0; iter < 3; iter++) {
 
         // Launch the kernel to update the grid
-        updateGrid<<<gridSize, blockSize>>>(d_board, d_board_new, d_levels, d_levels_new, n, m, alpha, gamma);
+        updateGrid<<<gridSize, blockSize, (BLOCK_SIZE + 2) * (BLOCK_SIZE + 2)>>>(d_board, d_board_new, d_levels, d_levels_new, n, m, alpha, gamma);
 
         /* d_board = d_board_new;
         d_levels = d_levels_new; */
 
         // Copy data from d_board_new to d_board on the GPU
         cudaMemcpy(d_board, d_board_new, n * m * sizeof(unsigned int), cudaMemcpyDeviceToDevice);
-        cudaMemcpy(d_levels, d_levels_new, n * m * sizeof(unsigned int), cudaMemcpyDeviceToDevice);
+        cudaMemcpy(d_levels, d_levels_new, n * m * sizeof(float), cudaMemcpyDeviceToDevice);
 
         unsigned int* board_result = new unsigned int[n * m];
         cudaMemcpy(board_result, d_board, n * m * sizeof(unsigned int), cudaMemcpyDeviceToHost);
+
+        for (int i = 0; i < n; i++) {
+            for (int j = 0; j < m; j++) {
+                printf("%u ", board_result[i * m + j]);
+            }
+            printf("\n");
+        }
 
         // Save the board to a file
         char filename[50];
