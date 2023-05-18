@@ -14,11 +14,11 @@ __device__ int lock = 0;
 __global__ void updateGrid(unsigned int* d_board, unsigned int* d_board_new, float* d_levels, float* d_levels_new, int n_rows, int n_cols, float alpha, float gamma)
 {
 
-    __shared__ unsigned int s_board[BLOCK_SIZE + 2][BLOCK_SIZE + 2];
-    __shared__ float s_levels[BLOCK_SIZE + 2][BLOCK_SIZE + 2];
+    __shared__ unsigned int s_board[BLOCK_SIZE + 4][BLOCK_SIZE + 4];
+    __shared__ float s_levels[BLOCK_SIZE + 4][BLOCK_SIZE + 4];
 
-    __shared__ unsigned int s_board_new[BLOCK_SIZE + 2][BLOCK_SIZE + 2];
-    __shared__ float s_levels_new[BLOCK_SIZE + 2][BLOCK_SIZE + 2];
+    __shared__ unsigned int s_board_new[BLOCK_SIZE + 4][BLOCK_SIZE + 4];
+    __shared__ float s_levels_new[BLOCK_SIZE + 4][BLOCK_SIZE + 4];
 
     // precompute coefficients
     float alpha12 = alpha / 12.;
@@ -34,8 +34,8 @@ __global__ void updateGrid(unsigned int* d_board, unsigned int* d_board_new, flo
     int idx = row * n_cols + col;
 
     // idx znotraj shared memory
-    int shared_col = threadIdx.x + 1;
-    int shared_row = threadIdx.y + 1;
+    int shared_col = threadIdx.x + 2;
+    int shared_row = threadIdx.y + 2;
 
     // Load current cell and buffered cells into shared memory
     if (row < n_rows && col < n_cols) {
@@ -46,108 +46,107 @@ __global__ void updateGrid(unsigned int* d_board, unsigned int* d_board_new, flo
         s_levels_new[shared_row][shared_col] = d_levels_new[idx];
 
         // upper edge
-        if (threadIdx.y == 0) {
-            s_board[0][shared_col] = d_board[(row - 1) * n_cols + col];
-            s_levels[0][shared_col] = d_levels[(row - 1) * n_cols + col];
-            s_board_new[0][shared_col] = d_board_new[(row - 1) * n_cols + col];
-            s_levels_new[0][shared_col] = d_levels_new[(row - 1) * n_cols + col];
+        if (threadIdx.y == 0 && row > 0) { // we dont have to buffer the first row
+            s_levels[1][shared_col] = d_levels[(row - 1) * n_cols + col];
+            s_levels_new[1][shared_col] = d_levels_new[(row - 1) * n_cols + col];
+            s_levels[0][shared_col] = d_levels[(row - 2) * n_cols + col];
+            s_levels_new[0][shared_col] = d_levels_new[(row - 2) * n_cols + col];
+
+            // one buffered edge is enough
+            s_board[1][shared_col] = d_board[(row - 1) * n_cols + col];
+            s_board_new[1][shared_col] = d_board_new[(row - 1) * n_cols + col];
         }
 
         // lower edge
-        if (threadIdx.y == blockDim.y - 1) {
-            s_board[shared_row + 1][shared_col] = d_board[(row + 1) * n_cols + col];
+        if (threadIdx.y == blockDim.y - 1 && row < n_rows - 1) { // we dont have to buffer the last row
             s_levels[shared_row + 1][shared_col] = d_levels[(row + 1) * n_cols + col];
-            s_board_new[shared_row + 1][shared_col] = d_board_new[(row + 1) * n_cols + col];
             s_levels_new[shared_row + 1][shared_col] = d_levels_new[(row + 1) * n_cols + col];
+            s_levels[shared_row + 2][shared_col] = d_levels[(row + 2) * n_cols + col];
+            s_levels_new[shared_row + 2][shared_col] = d_levels_new[(row + 2) * n_cols + col];
+
+            // one buffered edge is enough
+            s_board[shared_row + 1][shared_col] = d_board[(row + 1) * n_cols + col];
+            s_board_new[shared_row + 1][shared_col] = d_board_new[(row + 1) * n_cols + col];
         }
 
         // right edge
-        if (threadIdx.x == blockDim.x - 1) {
-            s_board[shared_row][shared_col + 1] = d_board[row * n_cols + col + 1];
+        if (threadIdx.x == blockDim.x - 1 && col < n_cols - 1) { // we dont have to buffer the last column
             s_levels[shared_row][shared_col + 1] = d_levels[row * n_cols + col + 1];
-            s_board_new[shared_row][shared_col + 1] = d_board_new[row * n_cols + col + 1];
             s_levels_new[shared_row][shared_col + 1] = d_levels_new[row * n_cols + col + 1];
+            s_levels[shared_row][shared_col + 2] = d_levels[row * n_cols + col + 2];
+            s_levels_new[shared_row][shared_col + 2] = d_levels_new[row * n_cols + col + 2];
+
+            // one buffered edge is enough
+            s_board[shared_row][shared_col + 1] = d_board[row * n_cols + col + 1];
+            s_board_new[shared_row][shared_col + 1] = d_board_new[row * n_cols + col + 1];
         }
 
         // left edge
-        if (threadIdx.x == 0) {
-            s_board[shared_row][0] = d_board[row * n_cols + col - 1];
-            s_levels[shared_row][0] = d_levels[row * n_cols + col - 1];
-            s_board_new[shared_row][0] = d_board_new[row * n_cols + col - 1];
-            s_levels_new[shared_row][0] = d_levels_new[row * n_cols + col - 1];
+        if (threadIdx.x == 0 && col > 0) { // we dont have to buffer the first column
+            s_levels[shared_row][1] = d_levels[row * n_cols + (col - 1)];
+            s_levels_new[shared_row][1] = d_levels_new[row * n_cols + (col - 1)];
+            s_levels[shared_row][0] = d_levels[row * n_cols + (col - 2)];
+            s_levels_new[shared_row][0] = d_levels_new[row * n_cols + (col - 2)];
+
+            // one buffered edge is enough
+            s_board[shared_row][1] = d_board[row * n_cols + (col - 1)];
+            s_board_new[shared_row][1] = d_board_new[row * n_cols + (col - 1)];
         }
 
         // top left corner
-        if (threadIdx.x == 0 && threadIdx.y == 0) {
-            s_board[0][0] = d_board[(row - 1) * n_cols + col - 1];
-            s_levels[0][0] = d_levels[(row - 1) * n_cols + col - 1];
-            s_board_new[0][0] = d_board_new[(row - 1) * n_cols + col - 1];
-            s_levels_new[0][0] = d_levels_new[(row - 1) * n_cols + col - 1];
+        if (threadIdx.x == 0 && threadIdx.y == 0 && row > 0 && col > 0) {
+            s_levels[1][1] = d_levels[(row - 1) * n_cols + (col - 1)];
+            s_levels_new[1][1] = d_levels_new[(row - 1) * n_cols + (col - 1)];
+            s_levels[0][0] = d_levels[(row - 2) * n_cols + (col - 2)];
+            s_levels_new[0][0] = d_levels_new[(row - 2) * n_cols + (col - 2)];
+
+            s_board[1][1] = d_board[(row - 1) * n_cols + (col - 1)];
+            s_board_new[1][1] = d_board_new[(row - 1) * n_cols + (col - 1)];
         }
 
         // top right corner
-        if (threadIdx.x == blockDim.x - 1 && threadIdx.y == 0) {
-            s_board[0][shared_col + 1] = d_board[(row - 1) * n_cols + col + 1];
-            s_levels[0][shared_col + 1] = d_levels[(row - 1) * n_cols + col + 1];
-            s_board_new[0][shared_col + 1] = d_board_new[(row - 1) * n_cols + col + 1];
-            s_levels_new[0][shared_col + 1] = d_levels_new[(row - 1) * n_cols + col + 1];
+        if (threadIdx.x == blockDim.x - 1 && threadIdx.y == 0 && row > 0 && col < n_cols - 1) {
+            s_levels[0][shared_col + 2] = d_levels[(row - 2) * n_cols + (col + 2)];
+            s_levels_new[0][shared_col + 2] = d_levels_new[(row - 2) * n_cols + (col + 2)];
+            s_levels[1][shared_col + 1] = d_levels[(row - 1) * n_cols + (col + 1)];
+            s_levels_new[1][shared_col + 1] = d_levels_new[(row - 1) * n_cols + (col + 1)];
+
+            s_board[1][shared_col + 1] = d_board[(row - 1) * n_cols + (col + 1)];
+            s_board_new[1][shared_col + 1] = d_board_new[(row - 1) * n_cols + (col + 1)];
         }
 
         // bottom left corner
-        if (threadIdx.x == 0 && threadIdx.y == blockDim.y - 1) {
-            s_board[shared_row + 1][0] = d_board[(row + 1) * n_cols + col - 1];
-            s_levels[shared_row + 1][0] = d_levels[(row + 1) * n_cols + col - 1];
-            s_board_new[shared_row + 1][0] = d_board_new[(row + 1) * n_cols + col - 1];
-            s_levels_new[shared_row + 1][0] = d_levels_new[(row + 1) * n_cols + col - 1];
+        if (threadIdx.x == 0 && threadIdx.y == blockDim.y - 1 && row < n_rows - 1 && col > 0) {
+            s_levels[shared_row + 1][1] = d_levels[(row + 1) * n_cols + (col - 1)];
+            s_levels_new[shared_row + 1][1] = d_levels_new[(row + 1) * n_cols + (col - 1)];
+            s_levels[shared_row + 2][0] = d_levels[(row + 2) * n_cols + (col - 2)];
+            s_levels_new[shared_row + 2][0] = d_levels_new[(row + 2) * n_cols + (col - 2)];
+
+            s_board[shared_row + 1][1] = d_board[(row + 1) * n_cols + (col - 1)];
+            s_board_new[shared_row + 1][1] = d_board_new[(row + 1) * n_cols + (col - 1)];
         }
 
         // bottom right corner
-        if (threadIdx.x == blockDim.x - 1 && threadIdx.y == blockDim.y - 1) {
-            s_board[shared_row + 1][shared_col + 1] = d_board[(row + 1) * n_cols + col + 1];
-            s_levels[shared_row + 1][shared_col + 1] = d_levels[(row + 1) * n_cols + col + 1];
-            s_board_new[shared_row + 1][shared_col + 1] = d_board_new[(row + 1) * n_cols + col + 1];
-            s_levels_new[shared_row + 1][shared_col + 1] = d_levels_new[(row + 1) * n_cols + col + 1];
+        if (threadIdx.x == blockDim.x - 1 && threadIdx.y == blockDim.y - 1 && row < n_rows - 1 && col < n_cols - 1) {
+            s_levels[shared_row + 1][shared_col + 1] = d_levels[(row + 1) * n_cols + (col + 1)];
+            s_levels_new[shared_row + 1][shared_col + 1] = d_levels_new[(row + 1) * n_cols + (col + 1)];
+            s_levels[shared_row + 2][shared_col + 2] = d_levels[(row + 2) * n_cols + (col + 2)];
+            s_levels_new[shared_row + 2][shared_col + 2] = d_levels_new[(row + 2) * n_cols + (col + 2)];
+
+            s_board[shared_row + 1][shared_col + 1] = d_board[(row + 1) * n_cols + (col + 1)];
+            s_board_new[shared_row + 1][shared_col + 1] = d_board_new[(row + 1) * n_cols + (col + 1)];
         }
     }
 
     __syncthreads();
 
-    // Only one thread per block prints the shared memory
-
-    /* if (threadIdx.x == 0 && threadIdx.y == 0) {
-        // Acquire the lock
-        while (atomicCAS(&lock, 0, 1) != 0)
-            ;
-        printf("Before calculation Block (%d, %d)\n", blockIdx.x, blockIdx.y);
-        // Print the shared memory
-        for (int i = 0; i < BLOCK_SIZE + 2; i++) {
-            for (int j = 0; j < BLOCK_SIZE + 2; j++) {
-                printf("%d ", s_board_new[i][j]);
-            }
-            printf("\n");
-        }
-        printf("\n");
-
-        // print the shared levels
-        printf("levels\n");
-        for (int i = 0; i < BLOCK_SIZE + 2; i++) {
-            for (int j = 0; j < BLOCK_SIZE + 2; j++) {
-                printf("%f ", s_levels_new[i][j]);
-            }
-            printf("\n");
-        }
-        printf("\n");
-
-        // Release the lock
-        lock = 0;
-    } */
     // Check if the coordinates are within the grid bounds
     // and current cell is not frozen or edge
     // 0 -> edge cell
     // 1 -> unreceptive
     // 2 -> boundary
     // 3 -> frozen
-    // only unreceptive and boundary cells can receive water
+    // 1,2,3 cells can receive water
     if (col < n_cols && row < n_rows && s_board[shared_row][shared_col] != 0) {
         neighs = (col % 2 == 0) ? neighs_even_col : neighs_odd_col;
 
