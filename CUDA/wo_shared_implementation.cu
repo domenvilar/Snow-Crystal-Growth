@@ -102,6 +102,10 @@ int main(int argc, char* argv[])
     int block_size_x = atoi(argv[7]);
     int block_size_y = atoi(argv[8]);
 
+    cudaEvent_t start, stop;
+    cudaEventCreate(&start);
+    cudaEventCreate(&stop);
+
     printf("Initializing board..\n");
 
     // n rows and m columns
@@ -120,6 +124,8 @@ int main(int argc, char* argv[])
     float* d_levels;
     float* d_levels_new;
 
+    cudaEventRecord(start);
+
     cudaMalloc((void**)&d_board, n * m * sizeof(unsigned int));
     cudaMalloc((void**)&d_board_new, n * m * sizeof(unsigned int));
     cudaMalloc((void**)&d_levels, n * m * sizeof(float));
@@ -130,18 +136,27 @@ int main(int argc, char* argv[])
     cudaMemcpy(d_levels, levels[0], n * m * sizeof(float), cudaMemcpyHostToDevice);
     cudaMemcpy(d_levels_new, levels_new[0], n * m * sizeof(float), cudaMemcpyHostToDevice);
 
+    cudaEventRecord(stop);
+    cudaEventSynchronize(stop);
+
+    float copyTime;
+    cudaEventElapsedTime(&copyTime, start, stop);
+
     int numBlocksX = (m + block_size_x - 1) / block_size_x;
     int numBlocksY = (n + block_size_y - 1) / block_size_y;
 
-    printf("numBlocksX: %d\n", numBlocksX);
-    printf("numBlocksY: %d\n", numBlocksY);
+    // printf("numBlocksX: %d\n", numBlocksX);
+    // printf("numBlocksY: %d\n", numBlocksY);
 
     // Set grid and block dimensions
     dim3 gridSize(numBlocksX, numBlocksY);
     dim3 blockSize(block_size_x, block_size_y);
 
+    float allKernelTime = 0;
+    float allWriteTime = 0;
     for (int iter = 0; iter < n / 2; iter++) {
 
+        cudaEventRecord(start);
         // Launch the kernel to update the grid
         updateGrid<<<gridSize, blockSize>>>(d_board, d_board_new, d_levels, d_levels_new, n, m, alpha, gamma);
 
@@ -149,7 +164,15 @@ int main(int argc, char* argv[])
         cudaMemcpy(d_board, d_board_new, n * m * sizeof(unsigned int), cudaMemcpyDeviceToDevice);
         cudaMemcpy(d_levels, d_levels_new, n * m * sizeof(unsigned int), cudaMemcpyDeviceToDevice);
 
+        cudaEventRecord(stop);
+        cudaEventSynchronize(stop);
+
+        float kernelTime;
+        cudaEventElapsedTime(&kernelTime, start, stop);
+        allKernelTime += kernelTime;
+
         if (write_to_file) {
+            cudaEventRecord(start);
             unsigned int* board_result = new unsigned int[n * m];
             cudaMemcpy(board_result, d_board, n * m * sizeof(unsigned int), cudaMemcpyDeviceToHost);
             float* levels_result = new float[n * m];
@@ -163,6 +186,13 @@ int main(int argc, char* argv[])
             // Save the levels to a file
             snprintf(filename, sizeof(filename), "Data/levels_%d.bin", iter);
             saveLevelsToFile(levels_result, n, m, filename);
+
+            cudaEventRecord(stop);
+            cudaEventSynchronize(stop);
+
+            float writeTime;
+            cudaEventElapsedTime(&writeTime, start, stop);
+            allWriteTime += writeTime;
         }
     }
 
@@ -170,6 +200,10 @@ int main(int argc, char* argv[])
     cudaFree(d_board_new);
     cudaFree(d_levels);
     cudaFree(d_levels_new);
+
+    printf("Copy time: %f ms\n", copyTime);
+    printf("Kernel time: %f ms\n", allKernelTime);
+    printf("Write time: %f ms\n", allWriteTime);
 
     return 0;
 }
