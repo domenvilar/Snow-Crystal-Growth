@@ -46,7 +46,7 @@ unsigned int** board_initialize(unsigned int n, unsigned int m)
     }
 
     b[center_i][center_j] = 3;
-    printf("center_i: %d, center_j: %d\n", center_i, center_j);
+    // printf("center_i: %d, center_j: %d\n", center_i, center_j);
 
     return b;
 }

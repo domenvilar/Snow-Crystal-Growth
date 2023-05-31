@@ -26,7 +26,7 @@ void board_step_lines(float **levels,float **levels_new,
 
             if (mat[i][j] == 3) continue; // if the cell is frozen, skip this step
 
-            neighs = (j%2 == 0) ? neighs_even_col : neighs_odd_col; // determine the neighbor pointer
+            neighs = (j%2 == 0) ? neighs_even_col_h : neighs_odd_col_h; // determine the neighbor pointer
             
             //levels_new[i][j] = levels[i][j]; // copy the old value
             
@@ -67,7 +67,7 @@ void process_after_exchange(unsigned char **mat,int n, int m, int top_offset, in
     int j,k;
 
     for (j=1; j<m-1; j++){
-        neighs = (j%2 == 0) ? neighs_even_col : neighs_odd_col;
+        neighs = (j%2 == 0) ? neighs_even_col_h : neighs_odd_col_h;
 
         for (k=0; k<6; k++){
 
@@ -95,7 +95,7 @@ void process_after_exchange_v2(unsigned char **mat,int n, int m, int top_offset,
     int j,k;
 
     for (j=1; j<m-1; j++){
-        neighs = (j%2 == 0) ? neighs_even_col : neighs_odd_col;
+        neighs = (j%2 == 0) ? neighs_even_col_h : neighs_odd_col_h;
 
         for (k=0; k<6; k++){
 
@@ -124,7 +124,7 @@ void process_after_exchange_old(unsigned char **mat,int n, int m, int top_offset
     int j,k;
 
     for (j=1; j<m-1; j++){
-        neighs = (j%2 == 0) ? neighs_even_col : neighs_odd_col;
+        neighs = (j%2 == 0) ? neighs_even_col_h : neighs_odd_col_h;
         for (k=0; k<6; k++){
 
             ni = neighs[k][0];

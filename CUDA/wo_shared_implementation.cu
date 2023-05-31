@@ -68,11 +68,11 @@ __global__ void updateGrid(unsigned int* d_board, unsigned int* d_board_new, flo
 
 void saveBoardToFile(unsigned int* board, unsigned int n, unsigned int m, const char* filename)
 {
-    FILE* fp = fopen(filename, "wb+");
+    FILE* fp = fopen(filename, "w+");
     if (fp != NULL) {
         fwrite(board, sizeof(unsigned int), n * m, fp);
         fclose(fp);
-        printf("Board saved to file: %s\n", filename);
+        // printf("Board saved to file: %s\n", filename);
     } else {
         printf("Failed to open file for writing: %s\n", filename);
     }
@@ -80,11 +80,11 @@ void saveBoardToFile(unsigned int* board, unsigned int n, unsigned int m, const 
 
 void saveLevelsToFile(float* levels, unsigned int n, unsigned int m, const char* filename)
 {
-    FILE* fp = fopen(filename, "wb+");
+    FILE* fp = fopen(filename, "w+");
     if (fp != NULL) {
         fwrite(levels, sizeof(float), n * m, fp);
         fclose(fp);
-        printf("Levels saved to file: %s\n", filename);
+        // printf("Levels saved to file: %s\n", filename);
     } else {
         printf("Failed to open file for writing: %s\n", filename);
     }
@@ -101,12 +101,25 @@ int main(int argc, char* argv[])
     int write_to_file = atoi(argv[6]);
     int block_size_x = atoi(argv[7]);
     int block_size_y = atoi(argv[8]);
+    int is_shared_mem = atoi(argv[9]); // 0: without shared memory, 1: with shared memory
+
+    // shape of block
+    int is_block = atoi(argv[10]);
+    int is_column = atoi(argv[11]);
+    int is_row = atoi(argv[12]);
+    char* filename = argv[13];
+    int k = atoi(argv[14]);
+
+    FILE* fp = fopen(filename, "a");
+    if (fp == NULL) {
+        printf("Failed to open the file for writing.\n");
+        return 1;
+    }
+    // fprintf(fp, "n,m,alpha,beta,gamma,block_size_x,block_size_y,copy_time,kernel_time,write_time,is_shared_mem,is_block,is_column,is_row\n");
 
     cudaEvent_t start, stop;
     cudaEventCreate(&start);
     cudaEventCreate(&stop);
-
-    printf("Initializing board..\n");
 
     // n rows and m columns
     unsigned int** board = board_initialize(n, m);
@@ -145,8 +158,12 @@ int main(int argc, char* argv[])
     int numBlocksX = (m + block_size_x - 1) / block_size_x;
     int numBlocksY = (n + block_size_y - 1) / block_size_y;
 
-    // printf("numBlocksX: %d\n", numBlocksX);
-    // printf("numBlocksY: %d\n", numBlocksY);
+    printf("numBlocksX: %d\n", numBlocksX);
+    printf("numBlocksY: %d\n", numBlocksY);
+
+    printf("# n=%d\n# m=%d\n", n, m);
+    printf("# alpha=%.1f\n# beta=%.4f\n# gamma=%.3f\n", alpha, beta, gamma);
+    printf("# block_size_x=%d\n# block_size_y=%d\n", block_size_x, block_size_y);
 
     // Set grid and block dimensions
     dim3 gridSize(numBlocksX, numBlocksY);
@@ -154,7 +171,7 @@ int main(int argc, char* argv[])
 
     float allKernelTime = 0;
     float allWriteTime = 0;
-    for (int iter = 0; iter < n / 2; iter++) {
+    for (int iter = 0; iter < n / 3; iter++) {
 
         cudaEventRecord(start);
         // Launch the kernel to update the grid
@@ -171,7 +188,7 @@ int main(int argc, char* argv[])
         cudaEventElapsedTime(&kernelTime, start, stop);
         allKernelTime += kernelTime;
 
-        if (write_to_file) {
+        if (write_to_file && iter % k == 0) {
             cudaEventRecord(start);
             unsigned int* board_result = new unsigned int[n * m];
             cudaMemcpy(board_result, d_board, n * m * sizeof(unsigned int), cudaMemcpyDeviceToHost);
@@ -179,13 +196,12 @@ int main(int argc, char* argv[])
             cudaMemcpy(levels_result, d_levels, n * m * sizeof(float), cudaMemcpyDeviceToHost);
 
             // Save the board to a file
-            char filename[50];
-            snprintf(filename, sizeof(filename), "Data/array_%d.bin", iter);
-            saveBoardToFile(board_result, n, m, filename);
+            const char* board_filename = "Data/array.bin";
+            saveBoardToFile(board_result, n, m, board_filename);
 
             // Save the levels to a file
-            snprintf(filename, sizeof(filename), "Data/levels_%d.bin", iter);
-            saveLevelsToFile(levels_result, n, m, filename);
+            const char* levels_filename = "Data/levels.bin";
+            saveLevelsToFile(levels_result, n, m, levels_filename);
 
             cudaEventRecord(stop);
             cudaEventSynchronize(stop);
@@ -201,9 +217,13 @@ int main(int argc, char* argv[])
     cudaFree(d_levels);
     cudaFree(d_levels_new);
 
+    float secPerIter = allKernelTime / (n / 3);
+
     printf("Copy time: %f ms\n", copyTime);
-    printf("Kernel time: %f ms\n", allKernelTime);
-    printf("Write time: %f ms\n", allWriteTime);
+    printf("t[s]/iter: %f ms\n", secPerIter);
+    printf("Write time: %f ms\n\n", allWriteTime);
+    // Append the data to the file
+    fprintf(fp, "%d,%d,%f,%f,%f,%d,%d,%f,%f,%f,%d,%d,%d,%d,%d\n", n, m, alpha, beta, gamma, block_size_x, block_size_y, copyTime, secPerIter, allWriteTime, is_shared_mem, is_block, is_column, is_row, k);
 
     return 0;
 }

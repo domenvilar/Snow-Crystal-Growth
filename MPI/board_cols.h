@@ -25,7 +25,7 @@ void board_step_cols(float **levels,float **levels_new,
 
             if (mat[i][j] == 3) continue; // if the cell is frozen, skip this step
 
-            neighs = ((j+base_offset)%2 == 0) ? neighs_even_col : neighs_odd_col; // determine the neighbor pointer
+            neighs = ((j+base_offset)%2 == 0) ? neighs_even_col_h : neighs_odd_col_h; // determine the neighbor pointer
             
             //levels_new[i][j] = levels[i][j]; // copy the old value
             
@@ -63,10 +63,10 @@ void board_step_cols(float **levels,float **levels_new,
 void process_after_exchange(unsigned char **mat,int n, int m,
                             int left_offset, int right_offset,int base_offset)
 {   // pointers to neighbor arrays for the four columns we are working with
-    const char (*neighsLh)[2] = ((left_offset + base_offset)%2 == 0) ? neighs_even_col : neighs_odd_col; // the pointer to the neighbor offset arrays
-    const char (*neighsRh)[2] = ((m-right_offset + base_offset)%2 == 0) ? neighs_even_col : neighs_odd_col;
-    const char (*neighsLb)[2] = ((left_offset - 1 + base_offset)%2 == 0) ? neighs_even_col : neighs_odd_col; // the pointer to the neighbor offset arrays
-    const char (*neighsRb)[2] = ((m-right_offset-1 + base_offset)%2 == 0) ? neighs_even_col : neighs_odd_col;
+    const char (*neighsLh)[2] = ((left_offset + base_offset)%2 == 0) ? neighs_even_col_h : neighs_odd_col_h; // the pointer to the neighbor offset arrays
+    const char (*neighsRh)[2] = ((m-right_offset + base_offset)%2 == 0) ? neighs_even_col_h : neighs_odd_col_h;
+    const char (*neighsLb)[2] = ((left_offset - 1 + base_offset)%2 == 0) ? neighs_even_col_h : neighs_odd_col_h; // the pointer to the neighbor offset arrays
+    const char (*neighsRb)[2] = ((m-right_offset-1 + base_offset)%2 == 0) ? neighs_even_col_h : neighs_odd_col_h;
 
     int njLh,njRh,njLb,njRb,niLh,niRh,niLb,niRb; // the neighbor indices
     int i,k;

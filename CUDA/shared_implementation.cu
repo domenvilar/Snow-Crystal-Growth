@@ -7,18 +7,17 @@
 // srun --reservation=fri -G1 -n1 test
 
 // Grid dimensions
-#define BLOCK_SIZE 8 // Number of threads per block
-
-__device__ int lock = 0;
+// #define BLOCK_SIZE_X 8 // Number of threads per block
+// #define BLOCK_SIZE_Y 8 // Number of threads per block
 
 __global__ void updateGrid(unsigned int* d_board, unsigned int* d_board_new, float* d_levels, float* d_levels_new, int n_rows, int n_cols, float alpha, float gamma)
 {
     // printf("Block (%d, %d) started\n", blockIdx.x, blockIdx.y);
-    __shared__ unsigned int s_board[BLOCK_SIZE][BLOCK_SIZE];
-    __shared__ float s_levels[BLOCK_SIZE][BLOCK_SIZE];
+    __shared__ unsigned int s_board[BLOCK_SIZE_X][BLOCK_SIZE_Y];
+    __shared__ float s_levels[BLOCK_SIZE_X][BLOCK_SIZE_Y];
 
-    __shared__ unsigned int s_board_new[BLOCK_SIZE][BLOCK_SIZE];
-    __shared__ float s_levels_new[BLOCK_SIZE][BLOCK_SIZE];
+    __shared__ unsigned int s_board_new[BLOCK_SIZE_X][BLOCK_SIZE_Y];
+    __shared__ float s_levels_new[BLOCK_SIZE_X][BLOCK_SIZE_Y];
 
     // precompute coefficients
     float alpha12 = alpha / 12.;
@@ -58,8 +57,10 @@ __global__ void updateGrid(unsigned int* d_board, unsigned int* d_board_new, flo
     // 1 -> unreceptive
     // 2 -> boundary
     // 3 -> frozen
-    // 1,2,3 cells can receive water, calculalte water levels for 1x buffered edge
-    if (row_global < n_rows && col_global < n_cols && row_global >= 0 && col_global >= 0 && s_board[row][col] != 0 && col > 0 && col < BLOCK_SIZE - 1 && row > 0 && row < BLOCK_SIZE - 1) {
+    // 1,2,3 cells receive water, calculalte water levels for 1x buffered edge
+    // each thread calculates one cell, so we need to check if the cell is within the grid bounds
+    // we calculate water levels for 1x buffered edge -> we can update cell state for 2x buffered edge
+    if (row_global < n_rows && col_global < n_cols && row_global >= 0 && col_global >= 0 && s_board[row][col] != 0 && col > 0 && col < BLOCK_SIZE_X - 1 && row > 0 && row < BLOCK_SIZE_Y - 1) {
         neighs = (col_global % 2 == 0) ? neighs_even_col : neighs_odd_col; // to me se skrbi ce je prov
         // find the accumulation of water from the neighbors
         for (int k = 0; k < 6; k++) {
@@ -99,52 +100,6 @@ __global__ void updateGrid(unsigned int* d_board, unsigned int* d_board_new, flo
             s_levels_new[row][col] -= alpha2 * s_levels[row][col];
         }
     }
-
-    // Synchronize threads to ensure all shared memory updates are complete
-    __syncthreads();
-
-    // Copy values from shared memory back to global memory
-    if (row + 2 < blockDim.x && col + 2 < blockDim.y && row > 1 && col > 1 && row_global < n_rows && col_global < n_cols && row_global >= 0 && col_global >= 0) {
-        d_board_new[idx] = s_board_new[row][col];
-        d_levels_new[idx] = s_levels_new[row][col];
-    }
-
-    // Only one thread per block prints the shared memory
-
-    /*
-    __syncthreads();
-    if (threadIdx.x == 0 && threadIdx.y == 0) {
-        // Acquire the lock
-        while (atomicCAS(&lock, 0, 1) != 0)
-            ;
-
-        // print the shared levels
-        printf("After calculation Block (row %d, col %d)\n", blockIdx.y, blockIdx.x);
-        printf("levels after\n");
-        for (int i = 0; i < BLOCK_SIZE; i++) {
-            for (int j = 0; j < BLOCK_SIZE; j++) {
-                printf("%f ", s_levels_new[i][j]);
-            }
-            printf("\n");
-        }
-        printf("\n");
-
-        // print the shared board
-        printf("board after\n");
-        for (int i = 0; i < BLOCK_SIZE; i++) {
-            for (int j = 0; j < BLOCK_SIZE; j++) {
-                printf("%d ", s_board_new[i][j]);
-            }
-            printf("\n");
-        }
-
-        // Release the lock
-        // Release the lock
-        atomicExch(&lock, 0);
-    }
-    __syncthreads();
-
-    */
 }
 
 void saveBoardToFile(unsigned int* board, unsigned int n, unsigned int m, const char* filename)
@@ -153,19 +108,41 @@ void saveBoardToFile(unsigned int* board, unsigned int n, unsigned int m, const 
     if (fp != NULL) {
         fwrite(board, sizeof(unsigned int), n * m, fp);
         fclose(fp);
-        printf("Board saved to file: %s\n", filename);
+        // printf("Board saved to file: %s\n", filename);
     } else {
         printf("Failed to open file for writing: %s\n", filename);
     }
 }
 
-int main()
+int main(int argc, char* argv[])
 {
-    int n = 60, m = 60;
-    float alpha = 1., beta = 0.9, gamma = 0.001;
+    int n = atoi(argv[1]);
+    int m = atoi(argv[2]);
+    float alpha = atof(argv[3]);
+    float beta = atof(argv[4]);
+    float gamma = atof(argv[5]);
+    int write_to_file = atoi(argv[6]);
+    int block_size_x = atoi(argv[7]);
+    int block_size_y = atoi(argv[8]);
+    int is_shared_mem = atoi(argv[9]); // 0: without shared memory, 1: with shared memory
 
-    int N_steps = 14;
-    printf("Initializing board..\n");
+    // shape of block
+    int is_block = atoi(argv[10]);
+    int is_column = atoi(argv[11]);
+    int is_row = atoi(argv[12]);
+    char* filename = argv[13];
+
+    printf("BLOCK SIZE X: %d\n", BLOCK_SIZE_X);
+
+    FILE* fp = fopen(filename, "a");
+    if (fp == NULL) {
+        printf("Failed to open the file for writing.\n");
+        return 1;
+    }
+
+    cudaEvent_t start, stop;
+    cudaEventCreate(&start);
+    cudaEventCreate(&stop);
 
     // n rows and m columns
     unsigned int** board = board_initialize(n, m);
@@ -183,6 +160,8 @@ int main()
     float* d_levels;
     float* d_levels_new;
 
+    cudaEventRecord(start);
+
     cudaMalloc((void**)&d_board, n * m * sizeof(unsigned int));
     cudaMalloc((void**)&d_board_new, n * m * sizeof(unsigned int));
     cudaMalloc((void**)&d_levels, n * m * sizeof(float));
@@ -193,37 +172,30 @@ int main()
     cudaMemcpy(d_levels, levels[0], n * m * sizeof(float), cudaMemcpyHostToDevice);
     cudaMemcpy(d_levels_new, levels_new[0], n * m * sizeof(float), cudaMemcpyHostToDevice);
 
-    int numBlocksX = (m + BLOCK_SIZE - 5) / (BLOCK_SIZE - 4);
-    int numBlocksY = (n + BLOCK_SIZE - 5) / (BLOCK_SIZE - 4);
+    cudaEventRecord(stop);
+    cudaEventSynchronize(stop);
 
-    printf("numBlocksX: %d\n", numBlocksX);
-    printf("numBlocksY: %d\n", numBlocksY);
+    float copyTime;
+    cudaEventElapsedTime(&copyTime, start, stop);
+
+    printf("# n=%d\n# m=%d\n", n, m);
+    printf("# alpha=%.1f\n# beta=%.4f\n# gamma=%.3f\n", alpha, beta, gamma);
+    printf("# block_size_x=%d\n# block_size_y=%d\n", block_size_x, block_size_y);
+
+    int numBlocksX = (m + BLOCK_SIZE_X - 5) / (BLOCK_SIZE_X - 4);
+    int numBlocksY = (n + BLOCK_SIZE_Y - 5) / (BLOCK_SIZE_Y - 4);
+
+    // printf("numBlocksX: %d\n", numBlocksX);
+    // printf("numBlocksY: %d\n", numBlocksY);
 
     // Set grid and block dimensions
     dim3 gridSize(numBlocksX, numBlocksY);
-    dim3 blockSize(BLOCK_SIZE, BLOCK_SIZE);
+    dim3 blockSize(BLOCK_SIZE_X, BLOCK_SIZE_Y);
 
-    // print board
-    printf("Initial board:\n");
-    for (int i = 0; i < n; i++) {
-        for (int j = 0; j < m; j++) {
-            printf("%d ", board[i][j]);
-        }
-        printf("\n");
-    }
-    printf("\n");
-
-    // print levels
-    printf("Initial levels:\n");
-    for (int i = 0; i < n; i++) {
-        for (int j = 0; j < m; j++) {
-            printf("%.2f ", levels[i][j]);
-        }
-        printf("\n");
-    }
-
-    for (int iter = 0; iter < 30; iter++) {
-
+    float allKernelTime = 0;
+    float allWriteTime = 0;
+    for (int iter = 0; iter < n / 3; iter++) {
+        cudaEventRecord(start);
         // Launch the kernel to update the grid
         updateGrid<<<gridSize, blockSize>>>(d_board, d_board_new, d_levels, d_levels_new, n, m, alpha, gamma);
 
@@ -231,27 +203,44 @@ int main()
         cudaMemcpy(d_board, d_board_new, n * m * sizeof(unsigned int), cudaMemcpyDeviceToDevice);
         cudaMemcpy(d_levels, d_levels_new, n * m * sizeof(float), cudaMemcpyDeviceToDevice);
 
-        unsigned int* board_result = new unsigned int[n * m];
-        cudaMemcpy(board_result, d_board, n * m * sizeof(unsigned int), cudaMemcpyDeviceToHost);
+        cudaEventRecord(stop);
+        cudaEventSynchronize(stop);
 
-        for (int i = 0; i < n; i++) {
-            for (int j = 0; j < m; j++) {
-                printf("%u ", board_result[i * m + j]);
-            }
-            printf("\n");
+        float kernelTime;
+        cudaEventElapsedTime(&kernelTime, start, stop);
+        allKernelTime += kernelTime;
+
+        if (write_to_file) {
+            cudaEventRecord(start);
+            unsigned int* board_result = new unsigned int[n * m];
+            cudaMemcpy(board_result, d_board, n * m * sizeof(unsigned int), cudaMemcpyDeviceToHost);
+
+            // Save the board to a file
+            char filename[50];
+            snprintf(filename, sizeof(filename), "Data/array_%d.bin", iter);
+            saveBoardToFile(board_result, n, m, filename);
+
+            cudaEventRecord(stop);
+            cudaEventSynchronize(stop);
+
+            float writeTime;
+            cudaEventElapsedTime(&writeTime, start, stop);
+            allWriteTime += writeTime;
         }
-        printf("\n");
-
-        // Save the board to a file
-        char filename[50];
-        snprintf(filename, sizeof(filename), "Data/array_%d.bin", iter);
-        saveBoardToFile(board_result, n, m, filename);
     }
 
     cudaFree(d_board);
     cudaFree(d_board_new);
     cudaFree(d_levels);
     cudaFree(d_levels_new);
+
+    float secPerIter = allKernelTime / (n / 3);
+
+    printf("Copy time: %f ms\n", copyTime);
+    printf("t[s]/iter: %f ms\n", secPerIter);
+    printf("Write time: %f ms\n\n", allWriteTime);
+    // Append the data to the file
+    fprintf(fp, "%d,%d,%f,%f,%f,%d,%d,%f,%f,%f,%d,%d,%d,%d\n", n, m, alpha, beta, gamma, block_size_x, block_size_y, copyTime, secPerIter, allWriteTime, is_shared_mem, is_block, is_column, is_row);
 
     return 0;
 }
